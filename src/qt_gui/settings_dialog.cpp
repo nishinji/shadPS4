@@ -47,6 +47,8 @@ QStringList languageNames = {"Arabic",
 const QVector<int> languageIndexes = {21, 23, 14, 6,  18, 1,  12, 22, 2,  4, 25, 24, 29, 5,  0,
                                       9,  15, 16, 17, 7,  26, 8,  11, 20, 3, 13, 27, 10, 19, 28};
 
+QStringList hideCursorStates = {"Never", "Idle", "Always"};
+
 SettingsDialog::SettingsDialog(std::span<const QString> physical_devices, QWidget* parent)
     : QDialog(parent), ui(new Ui::SettingsDialog) {
     ui->setupUi(this);
@@ -66,6 +68,8 @@ SettingsDialog::SettingsDialog(std::span<const QString> physical_devices, QWidge
     QCompleter* completer = new QCompleter(languageNames, this);
     completer->setCaseSensitivity(Qt::CaseInsensitive);
     ui->consoleLanguageComboBox->setCompleter(completer);
+
+    ui->hideCursorComboBox->addItems(hideCursorStates);
 
     InitializeEmulatorLanguages();
     LoadValuesFromConfig();
@@ -97,6 +101,15 @@ SettingsDialog::SettingsDialog(std::span<const QString> physical_devices, QWidge
     ui->buttonBox->button(QDialogButtonBox::Apply)->setText(tr("Apply"));
     ui->buttonBox->button(QDialogButtonBox::RestoreDefaults)->setText(tr("Restore Defaults"));
     ui->buttonBox->button(QDialogButtonBox::Close)->setText(tr("Close"));
+
+    ui->backButtonBehaviorComboBox->addItem(tr("Touchpad Left"), "left");
+    ui->backButtonBehaviorComboBox->addItem(tr("Touchpad Center"), "center");
+    ui->backButtonBehaviorComboBox->addItem(tr("Touchpad Right"), "right");
+    ui->backButtonBehaviorComboBox->addItem(tr("None"), "none");
+
+    QString currentBackButtonBehavior = QString::fromStdString(Config::getBackButtonBehavior());
+    int index = ui->backButtonBehaviorComboBox->findData(currentBackButtonBehavior);
+    ui->backButtonBehaviorComboBox->setCurrentIndex(index != -1 ? index : 0);
 
     connect(ui->tabWidgetSettings, &QTabWidget::currentChanged, this,
             [this]() { ui->buttonBox->button(QDialogButtonBox::Close)->setFocus(); });
@@ -151,6 +164,37 @@ SettingsDialog::SettingsDialog(std::span<const QString> physical_devices, QWidge
             Config::setBGMvolume(val);
             BackgroundMusicPlayer::getInstance().setVolume(val);
         });
+
+        connect(ui->discordRPCCheckbox, &QCheckBox::stateChanged, this, [](int val) {
+            Config::setEnableDiscordRPC(val);
+            auto* rpc = Common::Singleton<DiscordRPCHandler::RPC>::Instance();
+            if (val == Qt::Checked) {
+                rpc->init();
+                rpc->setStatusIdling();
+            } else {
+                rpc->shutdown();
+            }
+        });
+
+        connect(ui->backButtonBehaviorComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int index) {
+                    if (index >= 0 && index < ui->backButtonBehaviorComboBox->count()) {
+                        QString data = ui->backButtonBehaviorComboBox->itemData(index).toString();
+                        Config::setBackButtonBehavior(data.toStdString());
+                    }
+                });
+    }
+
+    // Input TAB
+    {
+        connect(ui->hideCursorComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this](s16 index) {
+                    Config::setCursorState(index);
+                    OnCursorStateChanged(index);
+                });
+
+        connect(ui->idleTimeoutSpinBox, &QSpinBox::valueChanged, this,
+                [](int index) { Config::setCursorHideTimeout(index); });
     }
 
     // GPU TAB
@@ -174,6 +218,55 @@ SettingsDialog::SettingsDialog(std::span<const QString> physical_devices, QWidge
 
         connect(ui->nullGpuCheckBox, &QCheckBox::stateChanged, this,
                 [](int val) { Config::setNullGpu(val); });
+    }
+
+    // PATH TAB
+    {
+        for (const auto& dir : Config::getGameInstallDirs()) {
+            QString path_string;
+            Common::FS::PathToQString(path_string, dir);
+            QListWidgetItem* item = new QListWidgetItem(path_string);
+            ui->gameFoldersListWidget->addItem(item);
+        }
+
+        ui->removeFolderButton->setEnabled(false);
+
+        connect(ui->addFolderButton, &QPushButton::clicked, this, [this]() {
+            QString file_path_string =
+                QFileDialog::getExistingDirectory(this, tr("Directory to install games"));
+            auto file_path = Common::FS::PathFromQString(file_path_string);
+            if (!file_path.empty()) {
+                std::vector<std::filesystem::path> install_dirs = Config::getGameInstallDirs();
+                install_dirs.push_back(file_path);
+                Config::setGameInstallDirs(install_dirs);
+                QListWidgetItem* item = new QListWidgetItem(file_path_string);
+                ui->gameFoldersListWidget->addItem(item);
+            }
+        });
+
+        connect(ui->gameFoldersListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+            ui->removeFolderButton->setEnabled(
+                !ui->gameFoldersListWidget->selectedItems().isEmpty());
+        });
+
+        connect(ui->removeFolderButton, &QPushButton::clicked, this, [this]() {
+            QListWidgetItem* selected_item = ui->gameFoldersListWidget->currentItem();
+            QString item_path_string = selected_item ? selected_item->text() : QString();
+            if (!item_path_string.isEmpty()) {
+                auto file_path = Common::FS::PathFromQString(item_path_string);
+                std::vector<std::filesystem::path> install_dirs = Config::getGameInstallDirs();
+
+                auto iterator = std::remove_if(
+                    install_dirs.begin(), install_dirs.end(),
+                    [&file_path](const std::filesystem::path& dir) { return file_path == dir; });
+
+                if (iterator != install_dirs.end()) {
+                    install_dirs.erase(iterator, install_dirs.end());
+                    delete selected_item;
+                }
+                Config::setGameInstallDirs(install_dirs);
+            }
+        });
     }
 
     // DEBUG TAB
@@ -204,6 +297,7 @@ SettingsDialog::SettingsDialog(std::span<const QString> physical_devices, QWidge
         ui->logFilter->installEventFilter(this);
         ui->updaterGroupBox->installEventFilter(this);
         ui->GUIgroupBox->installEventFilter(this);
+        ui->backButtonBehaviorGroupBox->installEventFilter(this);
 
         // Graphics
         ui->graphicsAdapterGroupBox->installEventFilter(this);
@@ -228,6 +322,9 @@ void SettingsDialog::LoadValuesFromConfig() {
             std::find(languageIndexes.begin(), languageIndexes.end(), Config::GetLanguage())) %
         languageIndexes.size());
     ui->emulatorLanguageComboBox->setCurrentIndex(languages[Config::getEmulatorLanguage()]);
+    ui->hideCursorComboBox->setCurrentIndex(Config::getCursorState());
+    OnCursorStateChanged(Config::getCursorState());
+    ui->idleTimeoutSpinBox->setValue(Config::getCursorHideTimeout());
     ui->graphicsAdapterBox->setCurrentIndex(Config::getGpuId() + 1);
     ui->widthSpinBox->setValue(Config::getScreenWidth());
     ui->heightSpinBox->setValue(Config::getScreenHeight());
@@ -236,6 +333,7 @@ void SettingsDialog::LoadValuesFromConfig() {
     ui->nullGpuCheckBox->setChecked(Config::nullGpu());
     ui->playBGMCheckBox->setChecked(Config::getPlayBGM());
     ui->BGMVolumeSlider->setValue((Config::getBGMvolume()));
+    ui->discordRPCCheckbox->setChecked(Config::getEnableDiscordRPC());
     ui->fullscreenCheckBox->setChecked(Config::isFullscreenMode());
     ui->showSplashCheckBox->setChecked(Config::showSplash());
     ui->ps4proCheckBox->setChecked(Config::isNeoMode());
@@ -258,6 +356,10 @@ void SettingsDialog::LoadValuesFromConfig() {
         }
     }
     ui->updateComboBox->setCurrentText(QString::fromStdString(updateChannel));
+
+    QString backButtonBehavior = QString::fromStdString(Config::getBackButtonBehavior());
+    int index = ui->backButtonBehaviorComboBox->findData(backButtonBehavior);
+    ui->backButtonBehaviorComboBox->setCurrentIndex(index != -1 ? index : 0);
 }
 
 void SettingsDialog::InitializeEmulatorLanguages() {
@@ -287,6 +389,18 @@ void SettingsDialog::OnLanguageChanged(int index) {
     ui->retranslateUi(this);
 
     emit LanguageChanged(ui->emulatorLanguageComboBox->itemData(index).toString().toStdString());
+}
+
+void SettingsDialog::OnCursorStateChanged(s16 index) {
+    if (index == -1)
+        return;
+    if (index == Config::HideCursorState::Idle) {
+        ui->idleTimeoutGroupBox->show();
+    } else {
+        if (!ui->idleTimeoutGroupBox->isHidden()) {
+            ui->idleTimeoutGroupBox->hide();
+        }
+    }
 }
 
 int SettingsDialog::exec() {
@@ -319,6 +433,8 @@ void SettingsDialog::updateNoteTextEdit(const QString& elementName) {
         text = tr("updaterGroupBox");
     } else if (elementName == "GUIgroupBox") {
         text = tr("GUIgroupBox");
+    } else if (elementName == "backButtonBehaviorGroupBox") {
+        text = tr("backButtonBehaviorGroupBox");
     }
 
     // Graphics
@@ -334,8 +450,6 @@ void SettingsDialog::updateNoteTextEdit(const QString& elementName) {
         text = tr("dumpShadersCheckBox");
     } else if (elementName == "nullGpuCheckBox") {
         text = tr("nullGpuCheckBox");
-    } else if (elementName == "dumpPM4CheckBox") {
-        text = tr("dumpPM4CheckBox");
     }
 
     // Debug

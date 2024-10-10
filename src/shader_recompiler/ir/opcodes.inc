@@ -14,6 +14,7 @@ OPCODE(Prologue,                                            Void,               
 OPCODE(Epilogue,                                            Void,                                                                                           )
 OPCODE(Discard,                                             Void,                                                                                           )
 OPCODE(DiscardCond,                                         Void,           U1,                                                                             )
+OPCODE(DebugPrint,                                          Void,           StringLiteral,  Opaque,          Opaque,        Opaque,         Opaque,         )
 
 // Constant memory operations
 OPCODE(ReadConst,                                           U32,            U32x2,          U32,                                                            )
@@ -23,6 +24,10 @@ OPCODE(ReadConstBuffer,                                     U32,            Opaq
 OPCODE(Barrier,                                             Void,                                                                                           )
 OPCODE(WorkgroupMemoryBarrier,                              Void,                                                                                           )
 OPCODE(DeviceMemoryBarrier,                                 Void,                                                                                           )
+
+// Geometry shader specific
+OPCODE(EmitVertex,                                          Void,                                                                                           )
+OPCODE(EmitPrimitive,                                       Void,                                                                                           )
 
 // Shared memory operations
 OPCODE(LoadSharedU32,                                       U32,            U32,                                                                            )
@@ -49,7 +54,7 @@ OPCODE(GetVectorRegister,                                   U32,            Vect
 OPCODE(SetVectorRegister,                                   Void,           VectorReg,      U32,                                                            )
 OPCODE(GetGotoVariable,                                     U1,             U32,                                                                            )
 OPCODE(SetGotoVariable,                                     Void,           U32,            U1,                                                             )
-OPCODE(GetAttribute,                                        F32,            Attribute,      U32,                                                            )
+OPCODE(GetAttribute,                                        F32,            Attribute,      U32,            U32,                                            )
 OPCODE(GetAttributeU32,                                     U32,            Attribute,      U32,                                                            )
 OPCODE(SetAttribute,                                        Void,           Attribute,      F32,            U32,                                            )
 

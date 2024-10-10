@@ -6,6 +6,7 @@
 #include <cstring>
 #include <type_traits>
 
+#include "shader_recompiler/info.h"
 #include "shader_recompiler/ir/attribute.h"
 #include "shader_recompiler/ir/basic_block.h"
 #include "shader_recompiler/ir/condition.h"
@@ -43,6 +44,7 @@ public:
     void Epilogue();
     void Discard();
     void Discard(const U1& cond);
+    void DebugPrint(const char* fmt, boost::container::small_vector<Value, 5> args);
 
     void Barrier();
     void WorkgroupMemoryBarrier();
@@ -78,7 +80,7 @@ public:
 
     [[nodiscard]] U1 Condition(IR::Condition cond);
 
-    [[nodiscard]] F32 GetAttribute(Attribute attribute, u32 comp = 0);
+    [[nodiscard]] F32 GetAttribute(Attribute attribute, u32 comp = 0, u32 index = 0);
     [[nodiscard]] U32 GetAttributeU32(Attribute attribute, u32 comp = 0);
     void SetAttribute(Attribute attribute, const F32& value, u32 comp = 0);
 
@@ -309,6 +311,9 @@ public:
     [[nodiscard]] Value ImageRead(const Value& handle, const Value& coords, TextureInstInfo info);
     void ImageWrite(const Value& handle, const Value& coords, const Value& color,
                     TextureInstInfo info);
+
+    void EmitVertex();
+    void EmitPrimitive();
 
 private:
     IR::Block::iterator insertion_point;
